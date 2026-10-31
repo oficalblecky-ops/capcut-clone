@@ -1,0 +1,62 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android scaffold
+        run: |
+          flutter --version
+          flutter create --platforms=android --org com.example --project-name capcut_clone build_app
+          rm -rf build_app/lib build_app/test
+          cp -r lib build_app/lib
+          cp pubspec.yaml build_app/pubspec.yaml
+
+      - name: Patch minSdk to 24 and storage permission
+        working-directory: build_app
+        run: |
+          gradle_file=$(ls android/app/build.gradle.kts android/app/build.gradle 2>/dev/null | head -n 1)
+          echo "Gradle file: $gradle_file"
+          sed -i -E 's/minSdk(Version)?[[:space:]]*=?[[:space:]]*flutter\.minSdkVersion/minSdk = 24/' "$gradle_file"
+          grep -n "minSdk" "$gradle_file"
+          grep -q "minSdk = 24" "$gradle_file"
+
+          manifest=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>\n    <application#' "$manifest"
+          grep -n "WRITE_EXTERNAL_STORAGE" "$manifest"
+
+      - name: Get dependencies
+        working-directory: build_app
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: build_app
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: capcut-clone-apk
+          path: build_app/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
